@@ -8,15 +8,20 @@ import concurrent.futures as cf, html, io, json, os, random, re, subprocess, sys
 import xml.etree.ElementTree as ET
 
 UA = "Mozilla/5.0 (student-research-bot; NLP coursework, non-commercial)"
+# moh.gov.gh sits behind a bot filter that answers the research UA with an HTML challenge
+# page instead of the file. Its robots.txt (checked 2026-09-27) disallows only /wp-admin/;
+# these two guideline PDFs live under /wp-content/uploads/ and are public documents.
+BROWSER_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 RAW = "data/raw"
 PMC = "https://pmc-oa-opendata.s3.amazonaws.com"
 PMC_OK = {"CC0", "CC BY", "CC BY-SA", "CC BY-NC", "CC BY-NC-SA"}          # ND excluded; NC flagged in the licence field
 CLINICAL = re.compile(r"\b(patients?|clinical|treatment|diagnos\w*|symptom\w*|therap\w*)\b", re.I)
 
-def get(url, timeout=60, tries=3):
+def get(url, timeout=60, tries=3, ua=UA):
     for i in range(tries):
         try:
-            return urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": UA}), timeout=timeout).read()
+            return urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": ua}), timeout=timeout).read()
         except Exception:
             if i == tries - 1:
                 raise
@@ -56,14 +61,54 @@ def medlineplus():
                          "license": "public domain (NLM); credit: Courtesy of MedlinePlus from the National Library of Medicine", "text": f"{t.get('title')}\n\n{text}"})
     write("medlineplus", docs)
 
+def clean_moh(text):
+    """Undo pdftotext artefacts in the Ghana guideline PDFs.
+
+    Three problems, measured on the 2017 STG:
+      - the bullet glyph extracts as the literal token "yy", 9,412 times, making it the
+        single most frequent token in the document (ahead of "of" and "the");
+      - contents-page dot leaders extract as 23,536 U+FFFD replacement characters;
+      - ~7,200 words of front matter (printer contacts, acknowledgements, contents) would
+        otherwise be chopped into training and held-out perplexity windows.
+
+    Deliberately NOT removed: lines that repeat often. Most of them ("Adults" 682x,
+    "Treatment objectives" 233x) are real structural headings, not page furniture.
+    """
+    lines = text.split("\n")
+
+    # Contents entries carry dot leaders; the real chapter heading does not. Use that to
+    # find where the body starts. If the pattern is absent (the EML), keep everything.
+    body = next((i for i, l in enumerate(lines)
+                 if re.search(r"Chapter\s+1\b", l) and "�" not in l), 0)
+    lines = lines[body:]
+
+    text = "\n".join(l for l in lines if l.strip() != "Standard Treatment Guidelines, 7th Edition, 2017")
+    text = text.replace("�", "").replace("﻿", "")
+    text = re.sub(r"(?m)^(\s*)yy\s+", r"\1- ", text)   # bullet at start of a line
+    text = re.sub(r"\byy\b", "-", text)                # any stragglers mid-line
+    return text
+
+
 def moh():
     docs = []
     for name, url in (("Ghana Standard Treatment Guidelines, 7th ed. (2017)", "https://www.moh.gov.gh/wp-content/uploads/2020/07/GHANA-STG-2017-1.pdf"),
                       ("Ghana Essential Medicines List, 7th ed. (2017)", "https://moh.gov.gh/wp-content/uploads/2020/07/GHANA-EML-2017.pdf")):
         os.makedirs(f"{RAW}/moh", exist_ok=True)
         path = f"{RAW}/moh/{url.rsplit('/', 1)[1]}"
-        open(path, "wb").write(get(url, timeout=180))
+        blob = get(url, timeout=180, ua=BROWSER_UA)
+        # Fail loudly: a silent empty extraction here once cost a full training run with no
+        # Ghana text in the corpus at all.
+        if not blob.startswith(b"%PDF"):
+            raise SystemExit(f"{url}\n  did not return a PDF (starts {blob[:40]!r}). "
+                             "The site's bot filter probably served a challenge page.")
+        open(path, "wb").write(blob)
         text = subprocess.run(["pdftotext", "-layout", path, "-"], capture_output=True, text=True).stdout
+        if len(text.split()) < 5_000:
+            raise SystemExit(f"{path}\n  pdftotext returned only {len(text.split())} words. "
+                             "Is pdftotext installed (brew install poppler / apt install poppler-utils)?")
+        raw_words = len(text.split())
+        text = clean_moh(text)
+        print(f"  {path}: {raw_words:,} words extracted -> {len(text.split()):,} after cleaning")
         docs.append({"id": "moh-" + url.rsplit('/', 1)[1][:-4].lower(), "source": "moh_ghana", "title": name, "url": url,
                      "license": "Ghana Ministry of Health publication; check reuse terms", "text": re.sub(r"[ \t]+", " ", text)})
     write("moh_ghana", docs)
@@ -138,6 +183,14 @@ if __name__ == "__main__":
         art = "JOURNAL\nx\nAbstract\nBody text here\nmore\nReferences\nSmith 2020\n"
         assert pmc_body(art) == "Abstract\nBody text here\nmore"
         assert "CC BY-NC-ND" not in PMC_OK and "CC BY" in PMC_OK
+        moh_raw = ("Cover Design\nTel: 0302\nChapter 1. Intro ��� 12\n"
+                   "Chapter 1: Disorders of the Gut\nyy Fever\n  yy Vomiting\n"
+                   "Standard Treatment Guidelines, 7th Edition, 2017\nGive ORS\n")
+        cleaned = clean_moh(moh_raw)
+        assert "Cover Design" not in cleaned and "�" not in cleaned, "front matter/leaders kept"
+        assert "yy" not in cleaned and "- Fever" in cleaned and "- Vomiting" in cleaned, cleaned
+        assert "7th Edition, 2017" not in cleaned and "Give ORS" in cleaned, "footer/body handling"
+        assert clean_moh("No chapters here\nyy a") == "No chapters here\n- a", "fallback keeps all"
         sys.exit("selftest ok")
     mode = sys.argv[1]
     {"medlineplus": medlineplus, "moh": moh, "hf": hf}.get(mode, lambda: pmc(int(sys.argv[2]) if len(sys.argv) > 2 else 15000))()

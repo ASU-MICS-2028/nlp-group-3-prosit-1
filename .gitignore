@@ -3,3 +3,6 @@ data/
 *.zip
 *.log
 __pycache__/
+adapters/
+results/
+.DS_Store

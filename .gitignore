@@ -1,0 +1,10 @@
+# generated data and artefacts (rebuild with the pipeline, do not commit)
+data/
+results/
+adapters/
+*.zip
+*.safetensors
+*.log
+__pycache__/
+.venv/
+.DS_Store

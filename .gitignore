@@ -1,5 +1,5 @@
 # generated data and artefacts (rebuild with the pipeline, do not commit)
-data/
+health-llm/data/
 results/
 adapters/
 *.zip

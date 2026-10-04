@@ -127,4 +127,6 @@ it, so it does not represent everyday Ewe, and no Ewe speaker has rated its outp
 
 ## Group
 
-Group 3, ICS554 Prosit 1. *[add group member names]*
+Group 3, ICS554 Prosit 1.
+
+Eugene Emmanuel Sewor, Henry Kofi Brandoh, Henry Nii-Amarh Olletey, Liza Ekua Ndede Aikins.

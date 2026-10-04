@@ -71,14 +71,45 @@ def mcq_accuracy(model, tok, items, mode="plain"):
         hit[it["task"]] = hit.get(it["task"], 0) + (pred == it["answer"]); tot[it["task"]] = tot.get(it["task"], 0) + 1
     return {t: hit[t] / tot[t] for t in tot}
 
+# Where an answer ends. The ChatML markers come first; the rest catch a base model that has
+# no chat training and simply invents the next exchange instead of stopping.
+STOP_MARKERS = ("<|im_end|>", "<|im_start|>", "<|endoftext|>",
+                "\nQuestion:", "\nPatient:", "\nUser:", "\nuser")
+
+def trim_answer(text):
+    """Cut a completion at the end of its first answer.
+
+    Applied identically to every model so the comparison stays fair: a base model that rambles
+    into a fabricated follow-up is judged on its first answer, same as a tuned one.
+    """
+    for marker in STOP_MARKERS:
+        text = text.split(marker)[0]
+    return text.strip()
+
+def stop_token_ids(tok):
+    """Token ids that should end generation, including ChatML's <|im_end|>.
+
+    Our prompts never contain the model's own eos (<|endoftext|>), so without this the model
+    runs past its answer and keeps writing the next turn.
+    """
+    ids = {tok.eos_token_id}
+    for marker in ("<|im_end|>", "<|im_start|>"):
+        tid = tok.convert_tokens_to_ids(marker)
+        if isinstance(tid, int) and tid >= 0 and tid != getattr(tok, "unk_token_id", None):
+            ids.add(tid)
+    return [i for i in ids if i is not None]
+
 def generate(model, tok, prompt, mode="chat", max_new_tokens=300):
     import torch
     text = (chatml([{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}], add_generation_prompt=True)
             if mode == "chat" else f"Question: {prompt}\nAnswer:")
     ids = tok(text, return_tensors="pt", add_special_tokens=False).to(model.device)
     with torch.no_grad():
-        out = model.generate(**ids, max_new_tokens=max_new_tokens, do_sample=False, repetition_penalty=1.05)
-    return tok.decode(out[0][ids.input_ids.shape[1]:], skip_special_tokens=True).split("<|im_end|>")[0].strip()
+        out = model.generate(**ids, max_new_tokens=max_new_tokens, do_sample=False, repetition_penalty=1.05,
+                             eos_token_id=stop_token_ids(tok),
+                             pad_token_id=tok.pad_token_id if tok.pad_token_id is not None else tok.eos_token_id)
+    # Decode WITH special tokens: skip_special_tokens=True strips <|im_end|> before we can cut on it.
+    return trim_answer(tok.decode(out[0][ids.input_ids.shape[1]:], skip_special_tokens=False))
 
 if __name__ == "__main__":
     assert chatml([{"role": "user", "content": "hi"}], True) == "<|im_start|>user\nhi<|im_end|>\n<|im_start|>assistant\n"
@@ -88,4 +119,9 @@ if __name__ == "__main__":
     assert r["labels"].count(-100) == len(chatml([{"role": "user", "content": "a b"}], True).split()) and len(r["input_ids"]) == len(r["labels"])
     it = {"prompt": "Q?", "task": "T", "letters": ["A", "B"], "answer": "A"}
     assert mcq_prompt_text(it, "plain") == "Q?\nAnswer:" and mcq_prompt_text(it, "chat").endswith("assistant\nAnswer:")
+    # the exact failure seen on Colab: <|im_end|> emitted, then the model invents the next turn
+    assert trim_answer("Treat with ACT.<|im_end|>\n<|im_start|>user\nA 65-year-old man") == "Treat with ACT."
+    assert trim_answer("Likely malaria.\nQuestion: A 40-year-old woman") == "Likely malaria."
+    assert trim_answer("  Refer urgently.  ") == "Refer urgently."
+    assert trim_answer("No markers here") == "No markers here"
     print("hl_lib selftest ok")

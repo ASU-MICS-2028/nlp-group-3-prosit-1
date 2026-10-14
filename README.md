@@ -106,3 +106,8 @@ it, so it does not represent everyday Ewe, and no Ewe speaker has rated its outp
 Group 3, ICS554 Prosit 1.
 
 Eugene Emmanuel Sewor, Henry Kofi Brandoh, Henry Nii-Amarh Olletey, Liza Ekua Ndede Aikins.
+
+## Use of AI assistance
+
+We used Claude (Anthropic) as a coding assistant to help write and debug the code in both
+notebooks. The design decisions, experiments, results and their interpretation are our own.

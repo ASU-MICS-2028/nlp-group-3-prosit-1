@@ -29,12 +29,11 @@ Longer contexts initially looked worse, but that turned out to be a tuning artef
 ```bash
 cd ewe-ngram-language-model
 pip install -r requirements.txt
-jupyter notebook ewe_ngram_lm.ipynb     # runs offline in ~30 seconds, fixed seed
-python wide_grid_check.py               # reproduces the tuning-grid finding independently
+jupyter notebook ewe_ngram_lm.ipynb     # runs offline in ~40 seconds, fixed seed
 ```
 
-Contents: `ewe_ngram_lm.ipynb` is the full pipeline; `wide_grid_check.py` is a standalone check
-of the grid result; `data/` holds the corpus.
+Contents: `ewe_ngram_lm.ipynb` is the full pipeline, including the wider-grid tuning check;
+`data/` holds the corpus.
 
 ---
 
@@ -67,36 +66,13 @@ catastrophic forgetting. On zero-shot medical exam questions the base model alre
 N = 300, so we report them as null. The clearest Stage 2 effect is the closing of the
 chat-format penalty, from 4.3 points for the base model to 1.1 for the fully tuned one.
 
-### Notebooks
+### Notebook
 
-| Notebook | Hardware | Use |
-|---|---|---|
-| [`health_llm_cuda.ipynb`](health-llm/notebooks/health_llm_cuda.ipynb) | CUDA GPU (Colab T4) | **The run behind the reported results.** Start here. |
-| [`health_llm_mlx.ipynb`](health-llm/notebooks/health_llm_mlx.ipynb) | Apple Silicon (MLX) | A second run on `Qwen3.5-2B-Base`, kept as a cross-platform comparison |
-| [`health_llm.ipynb`](health-llm/notebooks/health_llm.ipynb) | CUDA GPU (Unsloth) | The earlier Unsloth-based attempt, superseded |
-
-Each notebook carries its outputs, so the result tables and loss curves can be read without
-re-running anything.
-
-### Reproducing
-
-The dataset is not committed; it is rebuilt from source with the licence of every document
-recorded per item.
-
-```bash
-cd health-llm
-python collect.py medlineplus
-python collect.py moh                 # needs pdftotext (apt install poppler-utils)
-python collect.py hf
-python collect.py pmc 3000            # the slow step
-python prep.py                        # writes data/prep/ and colab_health_bundle.zip
-```
-
-Then upload `colab_health_bundle.zip` to Google Drive and run `health_llm_cuda.ipynb`, which
-mounts Drive, unpacks it, and checkpoints the adapter every 10 steps so a dropped session does
-not cost the run.
-
-Self-tests: `python hl_lib.py`, `python prep.py --selftest`, `python collect.py --selftest`.
+Everything is in [`health_llm.ipynb`](health-llm/health_llm.ipynb), saved with the outputs of the
+run behind the reported results, so the tables and loss curves can be read without re-running.
+To reproduce, open it in Google Colab on a T4 GPU and run all cells: it downloads and prepares
+the data from the original sources (recording each document's licence), trains both stages
+while checkpointing the adapter to Google Drive every 10 steps, and evaluates all three models.
 
 ---
 
